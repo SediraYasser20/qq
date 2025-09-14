@@ -148,46 +148,73 @@ class WC_Product_Sync_Hooks {
             return array();
         }
 
-        // Try existing internal helper(s) if present.
-        if ( method_exists( $this, 'prepare_product_data' ) ) {
-            $data = $this->prepare_product_data( $product );
-        } elseif ( method_exists( $this, 'get_product_data_payload' ) ) {
-            $data = $this->get_product_data_payload( $product );
-        } elseif ( method_exists( $this, 'build_product_payload' ) ) {
-            $data = $this->build_product_payload( $product );
-        } else {
-            // Fallback minimal, still "full enough" for your needs.
-            $data = array(
-                'id'                 => $product->get_id(),
-                'name'               => $product->get_name(),
-                'slug'               => $product->get_slug(),
-                'status'             => $product->get_status(),
-                'catalog_visibility' => $product->get_catalog_visibility(),
-                'regular_price'      => $product->get_regular_price(),
-                'sale_price'         => $product->get_sale_price(),
-                'manage_stock'       => $product->get_manage_stock(),
-                'stock_quantity'     => $product->get_stock_quantity(),
-                'stock_status'       => $product->get_stock_status(),
-                'short_description'  => $product->get_short_description(),
-                'description'        => $product->get_description(),
-                'sku'                => $product->get_sku(),
-            );
-            // Categories: send slugs so B can map.
-            $category_ids = $product->get_category_ids();
-            $data['categories'] = array();
-            if ( ! empty( $category_ids ) ) {
-                foreach ( $category_ids as $cat_id ) {
-                    $term = get_term( $cat_id, 'product_cat' );
-                    if ( $term && ! is_wp_error( $term ) ) {
-                        $data['categories'][] = array( 'slug' => $term->slug, 'name' => $term->name );
-                    }
+        // --- Base Data ---
+        $data = array(
+            'id'                 => $product->get_id(),
+            'name'               => $product->get_name(),
+            'slug'               => $product->get_slug(),
+            'status'             => $product->get_status(),
+            'catalog_visibility' => $product->get_catalog_visibility(),
+            'short_description'  => $product->get_short_description(),
+            'description'        => $product->get_description(),
+            'sku'                => $product->get_sku(),
+            'type'               => $product->get_type(),
+        );
+
+        // --- Type-Specific Data ---
+        if ( $product->is_type( 'variable' ) ) {
+            // Get attributes
+            $attributes = array();
+            foreach ( $product->get_attributes() as $attribute ) {
+                if ( ! $attribute->get_variation() ) {
+                    continue;
                 }
+                $attributes[] = array(
+                    'name'   => $attribute->get_name(),
+                    'options' => $attribute->get_options(),
+                );
             }
+            $data['attributes'] = $attributes;
+
+            // Get variations
+            $variations_data = array();
+            $variation_ids = $product->get_children();
+            foreach ( $variation_ids as $variation_id ) {
+                $variation = wc_get_product( $variation_id );
+                if ( ! $variation ) {
+                    continue;
+                }
+                $variations_data[] = array(
+                    'id'             => $variation->get_id(),
+                    'sku'            => $variation->get_sku(),
+                    'regular_price'  => $variation->get_regular_price(),
+                    'sale_price'     => $variation->get_sale_price(),
+                    'stock_quantity' => $variation->get_stock_quantity(),
+                    'stock_status'   => $variation->get_stock_status(),
+                    'manage_stock'   => $variation->get_manage_stock(),
+                    'attributes'     => $variation->get_attributes(),
+                );
+            }
+            $data['variations'] = $variations_data;
+
+        } else { // Simple product and other types
+            $data['regular_price']  = $product->get_regular_price();
+            $data['sale_price']     = $product->get_sale_price();
+            $data['manage_stock']   = $product->get_manage_stock();
+            $data['stock_quantity'] = $product->get_stock_quantity();
+            $data['stock_status']   = $product->get_stock_status();
         }
 
-        // Enforce 'id' presence
-        if ( empty( $data['id'] ) ) {
-            $data['id'] = $product->get_id();
+        // --- Taxonomy Data ---
+        $category_ids = $product->get_category_ids();
+        $data['categories'] = array();
+        if ( ! empty( $category_ids ) ) {
+            foreach ( $category_ids as $cat_id ) {
+                $term = get_term( $cat_id, 'product_cat' );
+                if ( $term && ! is_wp_error( $term ) ) {
+                    $data['categories'][] = array( 'slug' => $term->slug, 'name' => $term->name );
+                }
+            }
         }
 
         return $data;
