@@ -155,45 +155,48 @@ class WC_Product_Sync_Receiver_B {
             $product->set_sku( wc_clean( $data['sku'] ) );
         }
 
-        // Handle categories and determine visibility before saving.
-        $has_pc_component_cat = false;
-        if ( ! empty( $data['categories'] ) && is_array( $data['categories'] ) ) {
-            $cat_ids = array();
-            foreach ( $data['categories'] as $cat ) {
-                $term = null;
-                // Try to find term by slug first, as it's more reliable.
-                if ( ! empty( $cat['slug'] ) ) {
-                    $term = get_term_by( 'slug', sanitize_title( $cat['slug'] ), 'product_cat' );
-                }
-                // If not found by slug, try by name.
-                if ( ! $term && ! empty( $cat['name'] ) ) {
-                    $term = get_term_by( 'name', sanitize_text_field( $cat['name'] ), 'product_cat' );
-                }
-                // If still not found, create it.
-                if ( ! $term && ! empty( $cat['name'] ) ) {
-                    $res = wp_insert_term( sanitize_text_field( $cat['name'] ), 'product_cat', array( 'slug' => sanitize_title( $cat['slug'] ? $cat['slug'] : $cat['name'] ) ) );
-                    if ( ! is_wp_error( $res ) && isset( $res['term_id'] ) ) {
-                        $term = get_term( $res['term_id'] );
+        // Only set categories and related visibility on initial creation.
+        if ( ! $existing ) {
+            // Handle categories and determine visibility before saving.
+            $has_pc_component_cat = false;
+            if ( ! empty( $data['categories'] ) && is_array( $data['categories'] ) ) {
+                $cat_ids = array();
+                foreach ( $data['categories'] as $cat ) {
+                    $term = null;
+                    // Try to find term by slug first, as it's more reliable.
+                    if ( ! empty( $cat['slug'] ) ) {
+                        $term = get_term_by( 'slug', sanitize_title( $cat['slug'] ), 'product_cat' );
+                    }
+                    // If not found by slug, try by name.
+                    if ( ! $term && ! empty( $cat['name'] ) ) {
+                        $term = get_term_by( 'name', sanitize_text_field( $cat['name'] ), 'product_cat' );
+                    }
+                    // If still not found, create it.
+                    if ( ! $term && ! empty( $cat['name'] ) ) {
+                        $res = wp_insert_term( sanitize_text_field( $cat['name'] ), 'product_cat', array( 'slug' => sanitize_title( $cat['slug'] ? $cat['slug'] : $cat['name'] ) ) );
+                        if ( ! is_wp_error( $res ) && isset( $res['term_id'] ) ) {
+                            $term = get_term( $res['term_id'] );
+                        }
+                    }
+
+                    if ( $term && ! is_wp_error( $term ) ) {
+                        $cat_ids[] = (int) $term->term_id;
+                        if ( $term->slug === 'composant-pc' ) {
+                            $has_pc_component_cat = true;
+                        }
                     }
                 }
-
-                if ( $term && ! is_wp_error( $term ) ) {
-                    $cat_ids[] = (int) $term->term_id;
-                    if ( $term->slug === 'composant-pc' ) {
-                        $has_pc_component_cat = true;
-                    }
+                if ( ! empty( $cat_ids ) ) {
+                    $product->set_category_ids( $cat_ids );
                 }
             }
-            if ( ! empty( $cat_ids ) ) {
-                $product->set_category_ids( $cat_ids );
-            }
-        }
 
-        // Set visibility based on category
-        if ( $has_pc_component_cat ) {
-            $product->set_catalog_visibility( 'visible' );
-        } else {
-            $product->set_catalog_visibility( 'hidden' );
+            // Set visibility based on category
+            if ( $has_pc_component_cat ) {
+                $product->set_catalog_visibility( 'visible' );
+            } else {
+                $product->set_catalog_visibility( 'hidden' );
+            }
         }
 
         $product->save();
