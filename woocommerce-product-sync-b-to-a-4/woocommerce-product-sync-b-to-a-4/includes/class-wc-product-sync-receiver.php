@@ -155,39 +155,43 @@ class WC_Product_Sync_Receiver_B {
             $product->set_sku( wc_clean( $data['sku'] ) );
         }
 
-        // Handle categories and determine visibility before saving.
-        $has_pc_component_cat = false;
-        if ( ! empty( $data['categories'] ) && is_array( $data['categories'] ) ) {
-            $cat_ids = array();
-            foreach ( $data['categories'] as $cat ) {
-                $term = null;
-                // Try to find term by slug first, as it's more reliable.
-                if ( ! empty( $cat['slug'] ) ) {
-                    $term = get_term_by( 'slug', sanitize_title( $cat['slug'] ), 'product_cat' );
-                }
-                // If not found by slug, try by name.
-                if ( ! $term && ! empty( $cat['name'] ) ) {
-                    $term = get_term_by( 'name', sanitize_text_field( $cat['name'] ), 'product_cat' );
-                }
-                // Do not create categories if they don't exist.
+        // --- Category & Visibility Logic ---
 
-                if ( $term && ! is_wp_error( $term ) ) {
-                    $cat_ids[] = (int) $term->term_id;
-                    if ( $term->slug === 'composant-pc' ) {
-                        $has_pc_component_cat = true;
-                    }
+        // Determine if the incoming product data marks it as a PC component.
+        $is_pc_component = false;
+        if ( ! empty( $data['categories'] ) && is_array( $data['categories'] ) ) {
+            foreach ( $data['categories'] as $cat ) {
+                if ( isset($cat['slug']) && $cat['slug'] === 'composant-pc' ) {
+                    $is_pc_component = true;
+                    break;
                 }
             }
-            if ( ! empty( $cat_ids ) ) {
+        }
+
+        // Only set categories on initial creation.
+        if ( ! $existing ) {
+            if ( ! empty( $data['categories'] ) && is_array( $data['categories'] ) ) {
+                $cat_ids = array();
+                foreach ( $data['categories'] as $cat ) {
+                    $term = get_term_by( 'slug', $cat['slug'], 'product_cat' );
+                    // Only add the category if it already exists on Site B.
+                    if ( $term ) {
+                        $cat_ids[] = $term->term_id;
+                    }
+                }
                 $product->set_category_ids( $cat_ids );
             }
         }
 
-        // Set visibility based on category
-        if ( $has_pc_component_cat ) {
+        // Handle visibility on every sync based on the new rules.
+        if ( $is_pc_component ) {
+            // PC Components are always visible on Website B.
             $product->set_catalog_visibility( 'visible' );
         } else {
-            $product->set_catalog_visibility( 'hidden' );
+            // For all other products, mirror the visibility from Website A.
+            if ( isset( $data['catalog_visibility'] ) ) {
+                $product->set_catalog_visibility( sanitize_key( $data['catalog_visibility'] ) );
+            }
         }
 
         $product->save();
