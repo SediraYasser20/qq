@@ -102,121 +102,106 @@ class WC_Product_Sync_Receiver_B {
         }
 
         // We have a product post with the exact ID; now set WooCommerce data.
-        $product_type = isset( $data['type'] ) ? sanitize_key( $data['type'] ) : 'simple';
-        wp_set_object_terms( $desired_id, $product_type, 'product_type' );
         $product = wc_get_product( $desired_id );
-
-        // Failsafe: if product doesn't exist, create an instance.
         if ( ! $product ) {
-            $product_class = WC_Product_Factory::get_product_classname( $desired_id, $product_type );
-            if ( ! class_exists( $product_class ) ) {
-                $product_class = 'WC_Product_Simple';
+            $type      = ! empty( $data['type'] ) ? sanitize_key( $data['type'] ) : 'simple';
+            $classname = \WC_Product_Factory::get_product_classname( $desired_id, $type );
+            if ( ! class_exists( $classname ) ) {
+                $classname = 'WC_Product_Simple';
             }
-            $product = new $product_class( $desired_id );
+            $product = new $classname( $desired_id );
         }
 
-        // Set basic props
-        if ( isset( $data['name'] ) ) $product->set_name( wp_kses_post( $data['name'] ) );
-        if ( isset( $data['status'] ) ) $product->set_status( sanitize_key( $data['status'] ) );
-        if ( isset( $data['short_description'] ) ) $product->set_short_description( wp_kses_post( $data['short_description'] ) );
-        if ( isset( $data['description'] ) ) $product->set_description( wp_kses_post( $data['description'] ) );
-        if ( isset( $data['sku'] ) ) $product->set_sku( wc_clean( $data['sku'] ) );
+        // Set basic props (no images here).
+        if ( isset( $data['name'] ) ) {
+            $product->set_name( wp_kses_post( $data['name'] ) );
+        }
+        if ( isset( $data['status'] ) ) {
+            $product->set_status( sanitize_key( $data['status'] ) );
+        }
 
+        // Get price sync settings
         $settings = get_option( 'wc_product_sync_b_to_a_settings' );
         $price_sync_mode = isset( $settings['price_sync_mode'] ) ? $settings['price_sync_mode'] : 'sync_normal';
 
-        if ( $product->is_type( 'variable' ) ) {
-            if ( ! empty( $data['attributes'] ) ) {
-                $attributes = array();
-                foreach ( $data['attributes'] as $attr_data ) {
-                    $attribute = new WC_Product_Attribute();
-                    $attribute->set_name( $attr_data['name'] );
-                    $attribute->set_options( $attr_data['options'] );
-                    $attribute->set_position( 0 );
-                    $attribute->set_visible( true );
-                    $attribute->set_variation( true );
-                    $attributes[] = $attribute;
-                }
-                $product->set_attributes( $attributes );
-            }
-            if ( ! empty( $data['variations'] ) ) {
-                foreach ( $data['variations'] as $var_data ) {
-                    $variation_id = $this->get_variation_id_by_sku( $product, $var_data['sku'] );
-                    $variation = new WC_Product_Variation( $variation_id ?: 0 );
-                    $variation->set_parent_id( $product->get_id() );
-                    $variation->set_attributes( $var_data['attributes'] );
-                    $variation->set_sku( $var_data['sku'] );
-                    $variation->set_manage_stock( $var_data['manage_stock'] );
-                    $variation->set_stock_quantity( $var_data['stock_quantity'] );
-                    $variation->set_stock_status( $var_data['stock_status'] );
-                    if ( 'set_to_zero' === $price_sync_mode ) {
-                        $variation->set_regular_price( '0' );
-                        $variation->set_sale_price( '' );
-                    } else {
-                        if ( isset( $var_data['regular_price'] ) ) $variation->set_regular_price( $var_data['regular_price'] );
-                        if ( isset( $var_data['sale_price'] ) ) $variation->set_sale_price( $var_data['sale_price'] );
-                    }
-                    $variation->save();
-                }
-            }
+        if ( 'set_to_zero' === $price_sync_mode ) {
+            $product->set_regular_price( '0' );
+            $product->set_sale_price( '' ); // Setting sale price to empty is the correct way to remove it.
         } else {
-            if ( 'set_to_zero' === $price_sync_mode ) {
-                $product->set_regular_price( '0' );
-                $product->set_sale_price( '' );
-            } else {
-                if ( isset( $data['regular_price'] ) ) $product->set_regular_price( $data['regular_price'] );
-                if ( isset( $data['sale_price'] ) ) $product->set_sale_price( $data['sale_price'] );
+            // Sync prices normally
+            if ( isset( $data['regular_price'] ) ) {
+                $product->set_regular_price( wc_clean( (string) $data['regular_price'] ) );
             }
-            if ( isset( $data['manage_stock'] ) ) $product->set_manage_stock( $data['manage_stock'] );
-            if ( isset( $data['stock_quantity'] ) ) $product->set_stock_quantity( $data['stock_quantity'] );
-            if ( isset( $data['stock_status'] ) ) $product->set_stock_status( $data['stock_status'] );
+            if ( isset( $data['sale_price'] ) ) {
+                $product->set_sale_price( wc_clean( (string) $data['sale_price'] ) );
+            }
+        }
+        if ( isset( $data['manage_stock'] ) ) {
+            $product->set_manage_stock( (bool) $data['manage_stock'] );
+        }
+        if ( isset( $data['stock_quantity'] ) ) {
+            $product->set_stock_quantity( intval( $data['stock_quantity'] ) );
+        }
+        if ( isset( $data['stock_status'] ) ) {
+            $product->set_stock_status( sanitize_key( $data['stock_status'] ) );
+        }
+        if ( isset( $data['short_description'] ) ) {
+            $product->set_short_description( wp_kses_post( $data['short_description'] ) );
+        }
+        if ( isset( $data['description'] ) ) {
+            $product->set_description( wp_kses_post( $data['description'] ) );
+        }
+        if ( isset( $data['sku'] ) && '' !== $data['sku'] ) {
+            $product->set_sku( wc_clean( $data['sku'] ) );
         }
 
-        if ( ! $existing ) {
-            if ( ! empty( $data['categories'] ) ) {
-                $cat_ids = array();
-                foreach ( $data['categories'] as $cat ) {
-                    $term = get_term_by( 'slug', $cat['slug'], 'product_cat' );
-                    if ( ! $term && ! empty( $cat['name'] ) ) {
-                        $term_info = wp_insert_term( $cat['name'], 'product_cat', array( 'slug' => $cat['slug'] ) );
-                        if ( ! is_wp_error( $term_info ) ) $term = get_term( $term_info['term_id'], 'product_cat' );
-                    }
-                    if ( $term ) $cat_ids[] = $term->term_id;
+        // Handle categories and determine visibility before saving.
+        $has_pc_component_cat = false;
+        if ( ! empty( $data['categories'] ) && is_array( $data['categories'] ) ) {
+            $cat_ids = array();
+            foreach ( $data['categories'] as $cat ) {
+                $term = null;
+                // Try to find term by slug first, as it's more reliable.
+                if ( ! empty( $cat['slug'] ) ) {
+                    $term = get_term_by( 'slug', sanitize_title( $cat['slug'] ), 'product_cat' );
                 }
+                // If not found by slug, try by name.
+                if ( ! $term && ! empty( $cat['name'] ) ) {
+                    $term = get_term_by( 'name', sanitize_text_field( $cat['name'] ), 'product_cat' );
+                }
+                // Do not create categories if they don't exist.
+
+                if ( $term && ! is_wp_error( $term ) ) {
+                    $cat_ids[] = (int) $term->term_id;
+                    if ( $term->slug === 'composant-pc' ) {
+                        $has_pc_component_cat = true;
+                    }
+                }
+            }
+            if ( ! empty( $cat_ids ) ) {
                 $product->set_category_ids( $cat_ids );
             }
         }
 
-        if ( has_term( 'composant-pc', 'product_cat', $desired_id ) ) {
+        // Set visibility based on category
+        if ( $has_pc_component_cat ) {
             $product->set_catalog_visibility( 'visible' );
         } else {
-            if ( isset( $data['catalog_visibility'] ) ) $product->set_catalog_visibility( sanitize_key( $data['catalog_visibility'] ) );
+            $product->set_catalog_visibility( 'hidden' );
         }
 
         $product->save();
-        WC_Product_Sync_Logger_B_To_A::log( sprintf( 'Created/updated product with forced ID %d via custom endpoint.', $desired_id ), 'info' );
-        return new WP_REST_Response( array( 'id' => $desired_id, 'success' => true ), 201 );
-    }
 
-    /**
-     * Helper to find a variation ID by SKU for a given parent product.
-     *
-     * @param WC_Product $product The parent product.
-     * @param string     $sku     The SKU to find.
-     * @return int The variation ID, or 0 if not found.
-     */
-    private function get_variation_id_by_sku( $product, $sku ) {
-        if ( ! $product || ! $product->is_type( 'variable' ) || empty( $sku ) ) {
-            return 0;
+        if ( class_exists( 'WC_Product_Sync_Logger_B_To_A' ) ) {
+            WC_Product_Sync_Logger_B_To_A::log( sprintf( 'Created/updated product with forced ID %d via custom endpoint.', $desired_id ), 'info' );
         }
 
-        foreach ( $product->get_children() as $child_id ) {
-            $variation = wc_get_product( $child_id );
-            if ( $variation && $variation->get_sku() === $sku ) {
-                return $child_id;
-            }
-        }
-
-        return 0;
+        return new WP_REST_Response(
+            array(
+                'id'      => $desired_id,
+                'success' => true,
+            ),
+            201
+        );
     }
 }
